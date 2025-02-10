@@ -1,0 +1,38 @@
+#include <Adafruit_MLX90614.h> // Include the library for the MLX90614 sensor
+
+// Create an instance of the MLX90614 sensor
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+
+void setup() {
+    Serial.begin(9600); // Initialize serial communication at 9600 baud rate
+    while (!Serial); // Wait for the serial connection to establish
+
+    // Attempt to initialize the MLX90614 sensor
+    if (!mlx.begin()) {
+        Serial.println("Error connecting to MLX sensor. Check wiring.");
+        while (1); // Halt the program if initialization fails
+    };
+}
+
+void loop() {
+    float objectTempF = mlx.readObjectTempF(); // Read object temperature in Fahrenheit
+    float objectTempC = mlx.readObjectTempC(); // Read object temperature in Celsius
+    
+    // Print ambient and object temperature in Celsius
+    Serial.print("Ambient = "); Serial.print(mlx.readAmbientTempC());
+    Serial.print("*C\tObject = "); Serial.print(objectTempC); Serial.println("*C");
+    
+    // Print ambient and object temperature in Fahrenheit
+    Serial.print("Ambient = "); Serial.print(mlx.readAmbientTempF());
+    Serial.print("*F\tObject = "); Serial.print(objectTempF); Serial.println("*F");
+    
+    // Check if the object temperature reaches or exceeds 100°F or 37.8°C
+    if (objectTempF >= 100.0 || objectTempC >= 37.8) {
+        Serial.print("WARNING: Temperature has reached ");
+        Serial.print(objectTempF); Serial.print("°F / ");
+        Serial.print(objectTempC); Serial.println("°C!"); // Display a warning message
+    }
+    
+    Serial.println(); // Print a blank line for readability
+    delay(5000); // Wait for 5 seconds before reading again
+}

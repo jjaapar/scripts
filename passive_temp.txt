@@ -1,0 +1,59 @@
+#include <Adafruit_MLX90614.h> // Library for the MLX90614 temperature sensor
+
+// Unique identifier for this sensor device
+const char* DEVICE_NAME = "Temperature_Sensor_001";
+
+// Create an instance of the MLX90614 sensor
+Adafruit_MLX90614 mlx = Adafruit_MLX90614();
+
+void setup() {
+    // Initialize serial communication at 9600 baud for data transmission
+    Serial.begin(9600);
+    
+    // Wait until the serial connection is established (useful for debugging)
+    while (!Serial);
+
+    // Attempt to initialize the MLX90614 sensor
+    if (!mlx.begin()) {
+        Serial.println("ERROR: Unable to detect MLX90614 sensor. Please check wiring.");
+        while (1);  // Stop execution if the sensor is not found
+    }
+}
+
+void loop() {
+    // Check if there is an incoming command from the computer
+    if (Serial.available() > 0) {
+        char command = Serial.read();  // Read the received command
+
+        // If the command is 'T', read and send temperature data
+        if (command == 'T') {
+            // Read ambient and object temperatures in both Celsius and Fahrenheit
+            float ambientC = mlx.readAmbientTempC();
+            float objectC = mlx.readObjectTempC();
+            float ambientF = mlx.readAmbientTempF();
+            float objectF = mlx.readObjectTempF();
+
+            // Display sensor identifier
+            Serial.print("Device: "); 
+            Serial.println(DEVICE_NAME);
+
+            // Output ambient temperature in Celsius and Fahrenheit
+            Serial.print("Ambient Temperature: "); 
+            Serial.print(ambientC); Serial.print("°C | ");
+            Serial.print(ambientF); Serial.println("°F");
+
+            // Output object temperature in Celsius and Fahrenheit
+            Serial.print("Object Temperature: "); 
+            Serial.print(objectC); Serial.print("°C | ");
+            Serial.print(objectF); Serial.println("°F");
+
+            // If the object temperature is above a defined threshold, print a warning
+            if (objectF >= 100.0 || objectC >= 37.8) {
+                Serial.println("WARNING: High object temperature detected!");
+            }
+
+            // Add a blank line for better readability
+            Serial.println();
+        }
+    }
+}

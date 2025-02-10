@@ -1,0 +1,112 @@
+import serial
+import time
+import logging
+import socket
+import boto3
+from datetime import datetime
+from daemon import DaemonContext
+
+# -------------------- CONFIGURATION --------------------
+
+SERIAL_PORT = '/dev/ttyACM0'  # Adjust based on your system (e.g., 'COM3' for Windows)
+BAUD_RATE = 9600  # Should match the Arduino's serial baud rate
+CHECK_INTERVAL = 60  # Query the sensor every 60 seconds
+
+AWS_REGION = 'us-west-2'  # Set your AWS region
+CLOUDWATCH_NAMESPACE = 'TemperatureSensors'  # CloudWatch metric namespace
+
+SENSOR_NAME = "MLX90614_Temperature_Sensor"  # Name of the sensor
+LOG_FILE = "/tmp/temperature_daemon.log"  # Log file for monitoring
+
+# -------------------- SETUP LOGGING --------------------
+
+logging.basicConfig(filename=LOG_FILE, level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# -------------------- FUNCTIONS --------------------
+
+def get_hostname():
+    """Returns the system's hostname for logging and CloudWatch tagging."""
+    return socket.gethostname()
+
+def send_to_cloudwatch(metric_name, value):
+    """
+    Sends temperature data to AWS CloudWatch as a custom metric.
+
+    Parameters:
+        metric_name (str): Name of the metric (e.g., "ObjectTemperature").
+        value (float): The temperature value to send.
+    """
+    try:
+        cloudwatch = boto3.client('cloudwatch', region_name=AWS_REGION)
+        cloudwatch.put_metric_data(
+            Namespace=CLOUDWATCH_NAMESPACE,
+            MetricData=[{
+                'MetricName': metric_name,
+                'Dimensions': [
+                    {'Name': 'SensorName', 'Value': SENSOR_NAME},
+                    {'Name': 'Hostname', 'Value': get_hostname()}
+                ],
+                'Timestamp': datetime.utcnow(),
+                'Value': value,
+                'Unit': 'None'
+            }]
+        )
+        logging.info(f"Sent {metric_name} = {value} to CloudWatch.")
+    except Exception as e:
+        logging.error(f"Failed to send data to CloudWatch: {e}")
+
+def parse_temperature_data(response):
+    """
+    Parses the temperature response from the Arduino.
+
+    Expected format:
+        "Ambient = 24.0*C\tObject = 30.5*C"
+
+    Returns:
+        (ambient_temp, object_temp) as floats.
+    """
+    try:
+        parts = response.split("\t")
+        ambient_temp = float(parts[0].split('=')[1].strip().replace("*C", ""))
+        object_temp = float(parts[1].split('=')[1].strip().replace("*C", ""))
+        return ambient_temp, object_temp
+    except (IndexError, ValueError) as e:
+        logging.error(f"Error parsing response '{response}': {e}")
+        return None, None
+
+def read_temperature():
+    """
+    Continuously queries the Arduino for temperature data every CHECK_INTERVAL seconds.
+    Logs and sends the data to AWS CloudWatch.
+    """
+    try:
+        with serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1) as ser:
+            while True:
+                ser.write(b'Horn Temperature')  # Send query command to Arduino
+                time.sleep(1)  # Wait for response
+
+                if ser.in_waiting > 0:  # Check if data is available
+                    response = ser.readline().decode('utf-8').strip()
+                    if response:
+                        logging.info(f"Received: {response}")
+                        print(f"Received: {response}")
+
+                        ambient_temp, object_temp = parse_temperature_data(response)
+                        if ambient_temp is not None and object_temp is not None:
+                            send_to_cloudwatch("AmbientTemperature", ambient_temp)
+                            send_to_cloudwatch("ObjectTemperature", object_temp)
+
+                time.sleep(CHECK_INTERVAL)  # Wait before next query
+
+    except serial.SerialException as e:
+        logging.error(f"Serial connection error: {e}")
+
+def run_daemon():
+    """Runs the daemonized temperature monitoring process."""
+    with DaemonContext():
+        read_temperature()
+
+# -------------------- MAIN EXECUTION --------------------
+
+if __name__ == "__main__":
+    run_daemon()

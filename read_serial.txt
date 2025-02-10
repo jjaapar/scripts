@@ -1,0 +1,17 @@
+import serial
+
+# Open the serial port (replace '/dev/ttyACM0' with your actual port)
+ser = serial.Serial('/dev/ttyACM0', 9600)  # 9600 is the baud rate, adjust if needed
+
+# Read data from the serial port and print it
+try:
+    while True:
+        # Read one byte at a time and decode it to a string
+        data = ser.readline().decode('utf-8').strip()
+        print(data)
+
+except KeyboardInterrupt:
+    print("\nProgram interrupted. Closing...")
+finally:
+    # Close the serial port when done
+    ser.close()
