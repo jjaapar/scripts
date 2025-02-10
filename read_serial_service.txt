@@ -13,7 +13,7 @@ BAUD_RATE = 9600  # Ensure this matches the Arduino's baud rate
 CHECK_INTERVAL = 60  # Time in seconds between sensor queries
 
 # Define log file location
-LOG_FILE = "/var/log/temperature_monitor.log"  # File where logs will be stored
+LOG_FILE = "/tmp/temperature_monitor.log"  # File where logs will be stored
 DEVICE_NAME = "Temperature_Sensor_001"  # Unique identifier for this sensor
 
 # AWS CloudWatch configuration
