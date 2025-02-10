@@ -1,0 +1,17 @@
+[Unit]
+Description=Temperature Sensor Monitoring Service
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /path/to/your_script.py
+Restart=always
+User=root
+StandardOutput=null
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+
+#sudo systemctl daemon-reload
+#sudo systemctl enable temperature_monitor
+#sudo systemctl start temperature_monitor
