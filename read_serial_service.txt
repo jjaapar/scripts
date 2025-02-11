@@ -3,6 +3,8 @@ import time
 import logging
 import boto3
 import daemon
+import os
+import sys
 from datetime import datetime
 
 # -------------------- CONFIGURATION --------------------
@@ -13,21 +15,29 @@ BAUD_RATE = 9600  # Ensure this matches the Arduino's baud rate
 CHECK_INTERVAL = 60  # Time in seconds between sensor queries
 
 # Define log file location
-LOG_FILE = "/tmp/temperature_monitor.log"  # File where logs will be stored
+LOG_FILE = "/var/log/temperature_monitor.log"  # File where logs will be stored
 DEVICE_NAME = "Temperature_Sensor_001"  # Unique identifier for this sensor
 
 # AWS CloudWatch configuration
 AWS_REGION = "us-east-1"  # AWS region for CloudWatch logs
 LOG_GROUP = "TemperatureSensorLogs"  # Log group name in CloudWatch
 LOG_STREAM = DEVICE_NAME  # Unique log stream for this device
+AWS_PROFILE = "default"  # Specify the AWS profile to use from ~/.aws/credentials
 
 # -------------------- SETUP LOGGING --------------------
 
 # Configure logging to write to a file
 logging.basicConfig(
-    filename=LOG_FILE, level=logging.INFO, 
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    filename=LOG_FILE, level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s', force=True
 )
+
+# Redirect stdout and stderr to the log file
+sys.stdout = open(LOG_FILE, 'a')
+sys.stderr = open(LOG_FILE, 'a')
+
+# Set AWS credentials profile
+os.environ['AWS_PROFILE'] = AWS_PROFILE
 
 # Initialize AWS CloudWatch client
 cloudwatch = boto3.client('logs', region_name=AWS_REGION)
@@ -44,6 +54,7 @@ def create_log_stream():
     except cloudwatch.exceptions.ResourceNotFoundException:
         cloudwatch.create_log_group(logGroupName=LOG_GROUP)
         cloudwatch.create_log_stream(logGroupName=LOG_GROUP, logStreamName=LOG_STREAM)
+    logging.info(f"Log stream ensured: {LOG_STREAM}")
 
 def send_to_cloudwatch(timestamp, ambient_temp, object_temp):
     """
@@ -54,11 +65,12 @@ def send_to_cloudwatch(timestamp, ambient_temp, object_temp):
             'timestamp': int(datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S').timestamp() * 1000),
             'message': f"{timestamp} | {DEVICE_NAME} | Ambient: {ambient_temp}°C | Object: {object_temp}°C"
         }
-        cloudwatch.put_log_events(
+        response = cloudwatch.put_log_events(
             logGroupName=LOG_GROUP,
             logStreamName=LOG_STREAM,
             logEvents=[log_event]
         )
+        logging.info(f"Sent log to CloudWatch: {log_event}")
     except Exception as e:
         logging.error(f"Failed to send data to CloudWatch: {e}")
 
@@ -101,7 +113,10 @@ def run_as_service():
     """
     Runs the script as a background service using daemon mode.
     """
-    with daemon.DaemonContext():
+    with daemon.DaemonContext(
+        stdout=sys.stdout, 
+        stderr=sys.stderr
+    ):
         read_temperature()
 
 if __name__ == "__main__":
