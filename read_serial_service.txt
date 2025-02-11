@@ -19,7 +19,7 @@ LOG_FILE = "/var/log/temperature_monitor.log"  # File where logs will be stored
 DEVICE_NAME = "Temperature_Sensor_001"  # Unique identifier for this sensor
 
 # AWS CloudWatch configuration
-AWS_REGION = "us-east-1"  # AWS region for CloudWatch logs
+AWS_REGION = "us-west-2"  # AWS region for CloudWatch logs
 LOG_GROUP = "TemperatureSensorLogs"  # Log group name in CloudWatch
 LOG_STREAM = DEVICE_NAME  # Unique log stream for this device
 AWS_PROFILE = "default"  # Specify the AWS profile to use from ~/.aws/credentials
@@ -58,19 +58,20 @@ def create_log_stream():
 
 def send_to_cloudwatch(timestamp, ambient_temp, object_temp):
     """
-    Sends temperature readings to AWS CloudWatch Logs.
+    Sends temperature readings to AWS CloudWatch Logs and logs locally.
     """
     try:
+        log_message = f"{timestamp} | {DEVICE_NAME} | Ambient: {ambient_temp}°C | Object: {object_temp}°C"
         log_event = {
             'timestamp': int(datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S').timestamp() * 1000),
-            'message': f"{timestamp} | {DEVICE_NAME} | Ambient: {ambient_temp}°C | Object: {object_temp}°C"
+            'message': log_message
         }
         response = cloudwatch.put_log_events(
             logGroupName=LOG_GROUP,
             logStreamName=LOG_STREAM,
             logEvents=[log_event]
         )
-        logging.info(f"Sent log to CloudWatch: {log_event}")
+        logging.info(f"Sent log to CloudWatch and local file: {log_message}")
     except Exception as e:
         logging.error(f"Failed to send data to CloudWatch: {e}")
 
@@ -96,11 +97,7 @@ def read_temperature():
                         object_temp = float(lines[2].split('|')[0].split(':')[1].strip().replace("°C", ""))
                         timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')  # Get current timestamp
                         
-                        # Format and log the data
-                        output = f"{timestamp} | {DEVICE_NAME} | Ambient: {ambient_temp}°C | Object: {object_temp}°C"
-                        logging.info(output)
-                        
-                        # Send data to AWS CloudWatch
+                        # Log data locally and to CloudWatch
                         send_to_cloudwatch(timestamp, ambient_temp, object_temp)
                     except (IndexError, ValueError):
                         logging.error(f"Error parsing response: {raw_response}")
