@@ -28,7 +28,7 @@ AWS_PROFILE = "default"  # Specify the AWS profile to use from ~/.aws/credential
 
 # Configure logging to write to a file
 logging.basicConfig(
-    filename=LOG_FILE, level=logging.INFO,
+    filemode='a', filename=LOG_FILE, level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s', force=True
 )
 
@@ -61,7 +61,7 @@ def send_to_cloudwatch(timestamp, ambient_temp, object_temp):
     Sends temperature readings to AWS CloudWatch Logs and logs locally.
     """
     try:
-        log_message = f"{timestamp} | {DEVICE_NAME} | Ambient: {ambient_temp}°C | Object: {object_temp}°C"
+        log_message = f"{DEVICE_NAME},{ambient_temp}°C,{object_temp}°C"
         log_event = {
             'timestamp': int(datetime.strptime(timestamp, '%Y-%m-%d %H:%M:%S').timestamp() * 1000),
             'message': log_message
@@ -71,7 +71,7 @@ def send_to_cloudwatch(timestamp, ambient_temp, object_temp):
             logStreamName=LOG_STREAM,
             logEvents=[log_event]
         )
-        logging.info(f"Sent log to CloudWatch and local file: {log_message}")
+        logger.info(f"Sent log to CloudWatch and local file: {log_message}")
     except Exception as e:
         logging.error(f"Failed to send data to CloudWatch: {e}")
 
