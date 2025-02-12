@@ -15,8 +15,8 @@ BAUD_RATE = 9600  # Ensure this matches the Arduino's baud rate
 CHECK_INTERVAL = 60  # Time in seconds between sensor queries
 
 # Define log file location
-LOG_FILE = "/var/log/temperature_monitor.log"  # File where logs will be stored
-DEVICE_NAME = "Temperature_Sensor_001"  # Unique identifier for this sensor
+LOG_FILE = "/tmp/emperature_monitor.log"  # File where logs will be stored
+DEVICE_NAME = "MLX90614"  # Unique identifier for this sensor
 
 # AWS CloudWatch configuration
 AWS_REGION = "us-west-2"  # AWS region for CloudWatch logs
@@ -33,8 +33,8 @@ logging.basicConfig(
 )
 
 # Redirect stdout and stderr to the log file
-sys.stdout = open(LOG_FILE, 'a')
-sys.stderr = open(LOG_FILE, 'a')
+#sys.stdout = open(LOG_FILE, 'a')
+#sys.stderr = open(LOG_FILE, 'a')
 
 # Set AWS credentials profile
 os.environ['AWS_PROFILE'] = AWS_PROFILE
