@@ -1,188 +1,209 @@
+#!/usr/bin/python3
+
 import socket
 import struct
 import argparse
-import sys
 import time
-from prettytable import PrettyTable  # For pretty table output
-
-# --- Constants ---
-
-PNS_PRODUCT_ID = b'AB'
-
-# Command Identifiers
-PNS_RUN_CONTROL_COMMAND = b'S'
-PNS_CLEAR_COMMAND = b'C'
-PNS_GET_DATA_COMMAND = b'G'
-
-# Response Codes
-PNS_ACK = 0x06
-PNS_NAK = 0x15
-
-# LED Patterns Mapping
-LED_PATTERNS = {
-    0: "Off",
-    1: "On",
-    2: "Blinking (Slow)",
-    3: "Blinking (Medium)",
-    4: "Blinking (High)",
-    5: "Flashing (Single)",
-    6: "Flashing (Double)",
-    7: "Flashing (Triple)",
-    9: "No Change"
-}
-
-# Retry Settings
-MAX_RETRIES = 3
-RETRY_DELAY = 1.0  # seconds
+from dataclasses import dataclass
+from enum import IntEnum
+from typing import Tuple
+from prettytable import PrettyTable
 
 
-# --- Data Classes ---
+# Enum to define possible LED patterns
+class LEDPattern(IntEnum):
+    OFF = 0
+    ON = 1
+    BLINK_SLOW = 2
+    BLINK_MEDIUM = 3
+    BLINK_FAST = 4
+    NO_CHANGE = 9
 
+    # Convert pattern number to a readable string
+    def label(self):
+        return {
+            self.OFF: "Off",
+            self.ON: "On",
+            self.BLINK_SLOW: "Blinking (Slow)",
+            self.BLINK_MEDIUM: "Blinking (Medium)",
+            self.BLINK_FAST: "Blinking (Fast)",
+            self.NO_CHANGE: "No Change"
+        }.get(self, f"Unknown ({self})")
+
+    # Helper method to get the LED pattern from a name (e.g., 'off', 'on', etc.)
+    @classmethod
+    def from_name(cls, name: str) -> 'LEDPattern':
+        name_to_value = {
+            'off': cls.OFF,
+            'on': cls.ON,
+            'blinking_slow': cls.BLINK_SLOW,
+            'blinking_medium': cls.BLINK_MEDIUM,
+            'blinking_fast': cls.BLINK_FAST,
+            'no_change': cls.NO_CHANGE
+        }
+        try:
+            return name_to_value[name.lower()]
+        except KeyError:
+            raise ValueError(f"Invalid pattern name: {name}")
+
+
+# Data class to store the LED patterns for each color (Red, Amber, Green, Blue, White)
+@dataclass
 class PnsRunControlData:
-    """Operation control data for LEDs."""
+    red: LEDPattern
+    amber: LEDPattern
+    green: LEDPattern
+    blue: LEDPattern
+    white: LEDPattern
 
-    def __init__(self, red, amber, green, blue, white):
-        self.patterns = (red, amber, green, blue, white)
-
+    # Convert the LED data to a byte format for sending over the network
     def to_bytes(self) -> bytes:
-        """Pack LED patterns into bytes."""
-        return struct.pack('BBBBB', *self.patterns)
+        return struct.pack('BBBBB', self.red, self.amber, self.green, self.blue, self.white)
 
 
+# Data class to store the status data of the LEDs received from the device
+@dataclass
 class PnsStatusData:
-    """Parsed status data from device response."""
+    led_patterns: Tuple[LEDPattern, LEDPattern, LEDPattern, LEDPattern, LEDPattern]
 
-    def __init__(self, data: bytes):
-        self.led_patterns = data[:5]
+    # Convert the received byte data into human-readable LED patterns
+    @classmethod
+    def from_bytes(cls, data: bytes) -> 'PnsStatusData':
+        return cls(tuple(LEDPattern(p) for p in data[:5]))
 
 
-# --- Socket Communication Handler ---
-
+# Client class to handle communication with the LR5-LAN device over the network
 class PnsClient:
-    """Handles communication with the PNS device."""
+    PRODUCT_ID = b'AB'
+    COMMAND_RUN = b'S'
+    COMMAND_CLEAR = b'C'
+    COMMAND_GET = b'G'
+    ACK = 0x06
+    NAK = 0x15
+    MAX_RETRIES = 3  # Number of retries for network failure
+    RETRY_DELAY = 1.0  # Delay between retries
 
     def __init__(self, ip: str, port: int, verbose: bool = False):
-        self.ip = ip
-        self.port = port
+        """Initialize the client with the device's IP and port"""
+        self.ip, self.port = ip, port
         self.verbose = verbose
         self.sock = None
 
+    # Establish a connection to the device
     def __enter__(self):
         self.sock = socket.create_connection((self.ip, self.port))
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.sock:
-            self.sock.close()
+    # Close the connection when done
+    def __exit__(self, *_):
+        self.sock and self.sock.close()
 
-    def send_command(self, payload: bytes) -> bytes:
-        """Send command and receive response with retry logic."""
-        for attempt in range(1, MAX_RETRIES + 1):
+    # Method to send data to the device and receive the response
+    def _send(self, payload: bytes) -> bytes:
+        """Send the payload to the device and handle retries on failure."""
+        for attempt in range(1, self.MAX_RETRIES + 1):
             try:
                 if self.verbose:
                     print(f"[>] Sending: {payload.hex()}")
 
                 self.sock.sendall(payload)
-                recv_data = self.sock.recv(1024)
+                response = self.sock.recv(1024)
 
                 if self.verbose:
-                    print(f"[<] Received: {recv_data.hex()}")
+                    print(f"[<] Received: {response.hex()}")
 
-                return recv_data
-            except (socket.timeout, socket.error) as e:
-                print(f"[!] Attempt {attempt}/{MAX_RETRIES} failed: {e}")
-                if attempt == MAX_RETRIES:
+                return response
+            except Exception as e:
+                print(f"[!] Retry {attempt}/{self.MAX_RETRIES} - {e}")
+                if attempt == self.MAX_RETRIES:
                     raise
-                time.sleep(RETRY_DELAY)
+                time.sleep(self.RETRY_DELAY)
 
-    def run_control(self, control_data: PnsRunControlData):
-        """Send operation control command."""
-        payload = struct.pack('>2ssxH', PNS_PRODUCT_ID, PNS_RUN_CONTROL_COMMAND, 5)
-        payload += control_data.to_bytes()
-        response = self.send_command(payload)
+    # Command to control the LED patterns
+    def run_control(self, data: PnsRunControlData):
+        """Send the 'run control' command to set LED patterns."""
+        payload = struct.pack('>2ssxH', self.PRODUCT_ID, self.COMMAND_RUN, 5) + data.to_bytes()
+        if self._send(payload)[0] == self.NAK:
+            raise ValueError("Device responded with NAK")
 
-        if response[0] == PNS_NAK:
-            raise ValueError('Negative Acknowledge')
-
+    # Command to clear (turn off) the LEDs
     def clear(self):
-        """Send clear command."""
-        payload = struct.pack('>2ssxH', PNS_PRODUCT_ID, PNS_CLEAR_COMMAND, 0)
-        response = self.send_command(payload)
+        """Send the 'clear' command to turn off the LEDs."""
+        payload = struct.pack('>2ssxH', self.PRODUCT_ID, self.COMMAND_CLEAR, 0)
+        if self._send(payload)[0] == self.NAK:
+            raise ValueError("Device responded with NAK")
 
-        if response[0] == PNS_NAK:
-            raise ValueError('Negative Acknowledge')
-
+    # Command to get the current status of the LEDs
     def get_status(self) -> PnsStatusData:
-        """Request and return device status."""
-        payload = struct.pack('>2ssxH', PNS_PRODUCT_ID, PNS_GET_DATA_COMMAND, 0)
-        response = self.send_command(payload)
-
-        if response[0] == PNS_NAK:
-            raise ValueError('Negative Acknowledge')
-
-        return PnsStatusData(response)
+        """Send the 'get status' command to retrieve the current LED patterns."""
+        payload = struct.pack('>2ssxH', self.PRODUCT_ID, self.COMMAND_GET, 0)
+        response = self._send(payload)
+        if response[0] == self.NAK:
+            raise ValueError("Device responded with NAK")
+        return PnsStatusData.from_bytes(response)
 
 
-# --- Argument Parsing ---
-
+# Function to build and return the command-line argument parser
 def build_parser():
-    parser = argparse.ArgumentParser(
-        description="Control LR5-LAN LEDs over TCP/IP"
-    )
+    parser = argparse.ArgumentParser(description="Control the LEDs of an LR5-LAN device")
 
-    parser.add_argument(
-        "command", choices=['S', 'C', 'G'],
-        help="Command to send: 'S' = Set, 'C' = Clear, 'G' = Get Status"
-    )
+    # Define the available command options: S (set), C (clear), G (get)
+    parser.add_argument("command", choices=['S', 'C', 'G'],
+                        help="Command to be sent to the device:\n"
+                             "  S: Set LEDs to specified patterns\n"
+                             "  C: Clear LEDs\n"
+                             "  G: Get the current status of LEDs")
 
-    parser.add_argument("--red", type=int, choices=range(0, 10))
-    parser.add_argument("--amber", type=int, choices=range(0, 10))
-    parser.add_argument("--green", type=int, choices=range(0, 10))
-    parser.add_argument("--blue", type=int, choices=range(0, 10))
-    parser.add_argument("--white", type=int, choices=range(0, 10))
+    # Define the available LED patterns for each color (Red, Amber, Green, Blue, White)
+    for color in ['red', 'amber', 'green', 'blue', 'white']:
+        parser.add_argument(f"--{color}", type=str, choices=['off', 'on', 'blinking_slow', 'blinking_medium', 'blinking_fast', 'no_change'],
+                             help=f"LED {color.capitalize()} pattern")
 
-    parser.add_argument("--ip", default="192.168.10.1", help="Device IP address (default: 192.168.10.1)")
-    parser.add_argument("--port", type=int, default=10000, help="Device port (default: 10000)")
-    parser.add_argument("--verbose", action="store_true", help="Enable verbose output (show raw sent/received data)")
+    # Define IP and port settings for the device
+    parser.add_argument("--ip", default="192.168.10.1", help="IP address of the device (default: 192.168.10.1)")
+    parser.add_argument("--port", type=int, default=10000, help="Port number (default: 10000)")
+    parser.add_argument("--verbose", action="store_true", help="Enable verbose output for debugging")
 
     return parser
 
 
-# --- Main Function ---
+# Function to print the LED status in a human-readable table format
+def print_status(status: PnsStatusData):
+    table = PrettyTable(["Color", "Pattern"])
+    colors = ["Red", "Amber", "Green", "Blue", "White"]
+    for color, pattern in zip(colors, status.led_patterns):
+        table.add_row([color, pattern.label()])
+    print(table)
 
+
+# Main function to parse arguments and perform the requested action
 def main():
-    parser = build_parser()
-    args = parser.parse_args()
+    args = build_parser().parse_args()
 
+    # Convert the string-based LED patterns to enum values (e.g., 'off' -> LEDPattern.OFF)
+    led_data = {color: LEDPattern.from_name(getattr(args, color)) if getattr(args, color) else LEDPattern.OFF
+                for color in ["red", "amber", "green", "blue", "white"]}
+
+    # Open a connection to the device and perform the requested command
     with PnsClient(args.ip, args.port, verbose=args.verbose) as client:
         if args.command == 'S':
-            if None in (args.red, args.amber, args.green, args.blue, args.white):
-                parser.error("The 'S' command requires --red, --amber, --green, --blue, and --white options.")
-
-            control_data = PnsRunControlData(
-                args.red, args.amber, args.green, args.blue, args.white
-            )
-            client.run_control(control_data)
-            print("Run control command sent successfully.")
-
+            # If the command is 'S' (Set), we must specify all LED patterns
+            if any(value is None for value in led_data.values()):
+                raise ValueError("All LED colors must be specified for the 'S' command.")
+            control = PnsRunControlData(**led_data)
+            client.run_control(control)
+            print("LED patterns have been updated.")
         elif args.command == 'C':
+            # If the command is 'C' (Clear), turn off all LEDs
             client.clear()
-            print("Clear command sent successfully.")
-
+            print("All LEDs have been turned off.")
         elif args.command == 'G':
+            # If the command is 'G' (Get), retrieve the current LED status and display it
             status = client.get_status()
-            table = PrettyTable(["LED Color", "Status"])
-            table.align = "l"
-            
-            # Add LED Patterns
-            for color, pattern in zip(["Red", "Amber", "Green", "Blue", "White"], status.led_patterns):
-                pattern_label = LED_PATTERNS.get(pattern, f"Unknown ({pattern})")
-                table.add_row([f"{color}", pattern_label])
+            print("Current LED Status:")
+            print_status(status)
 
-            print("Status received:")
-            print(table)
 
-# --- Entry Point ---
-
+# Run the main function if the script is executed directly
 if __name__ == '__main__':
     main()
