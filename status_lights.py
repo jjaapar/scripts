@@ -7,6 +7,7 @@ import sys
 from enum import IntEnum
 from dataclasses import dataclass
 from typing import Tuple
+import time
 from prettytable import PrettyTable
 
 
@@ -86,6 +87,11 @@ class PnsClient:
         return PnsStatusData.from_bytes(response)
 
 
+def alert(message: str):
+    """Alert function for when the condition is not met."""
+    print(f"🚨 {message}")
+
+
 def print_examples():
     print("""
 📘 Usage Examples:
@@ -142,6 +148,28 @@ def main():
             for color, pattern in zip(['Red', 'Amber', 'Green'], status.patterns):
                 table.add_row([color, pattern.label()])
             print(table)
+
+        # Now, implement the new operation
+        # Check if light is green
+        status = client.get_status()
+        
+        # If the light is not green, stop and alert
+        if status.patterns[2] != LEDPattern.ON:
+            alert("The light is not green! Stopping the operation.")
+            return
+
+        # Change the LED to slow blinking yellow (amber)
+        print("Changing light to slow blinking yellow for 10 minutes...")
+        client.set_leds(PnsRunControlData(red=LEDPattern.OFF, amber=LEDPattern.BLINK_SLOW, green=LEDPattern.OFF))
+        
+        # Wait for 10 minutes (600 seconds)
+        time.sleep(600)
+
+        # After 10 minutes, change the light to solid red
+        print("Changing light to solid red...")
+        client.set_leds(PnsRunControlData(red=LEDPattern.ON, amber=LEDPattern.OFF, green=LEDPattern.OFF))
+
+        print("Operation completed.")
 
 
 if __name__ == "__main__":
