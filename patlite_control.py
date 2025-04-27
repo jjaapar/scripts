@@ -1,216 +1,355 @@
 #!/usr/bin/env python3
 """
-Patlite LA6-POE Smart Controller (Deluxe Version)
-==================================================
-
-Features:
-- Simple pattern and brightness control
-- Auto-reconnect if communication fails
-- Pretty terminal output using Rich
+Patlite LA6-POE Controller - A human-friendly interface for controlling and monitoring Patlite signal lights.
 """
 
 import socket
-import struct
+import time
 import argparse
-from typing import Dict, Optional
-from rich import print
-from rich.console import Console
+from enum import Enum, auto
+from typing import Optional, Tuple, Dict
+from contextlib import contextmanager
+from dataclasses import dataclass
 
-# --------------------------
-# Device Configuration
-# --------------------------
+class LightState(Enum):
+    """Enumeration for light states."""
+    OFF = 0
+    ON = 1
+    FLASH = 2
+    
+    def __str__(self):
+        return self.name.lower()
 
-DEFAULT_IP = '192.168.1.100'
-DEFAULT_PORT = 10000
-CONNECT_TIMEOUT = 5
-RESPONSE_TIMEOUT = 10
+class BuzzerState(Enum):
+    """Enumeration for buzzer states."""
+    OFF = 0
+    ON = 1
+    FLASH = 2
+    
+    def __str__(self):
+        return self.name.lower()
 
-PRODUCT_CODE = b'LA'
-ACK = 0x06
-NAK = 0x15
+class FlashSpeed(Enum):
+    """Enumeration for flash speeds."""
+    SLOW = 1
+    MEDIUM = 2
+    FAST = 3
+    
+    def __str__(self):
+        return self.name.lower()
 
-LED_PATTERNS = {
-    'off': 0x00,
-    'on': 0x01,
-    'slow': 0x02,
-    'medium': 0x03,
-    'fast': 0x04,
-    'no_change': 0x09
-}
+@dataclass
+class DeviceStatus:
+    """Dataclass to hold device status information."""
+    red: LightState
+    yellow: LightState
+    green: LightState
+    buzzer: BuzzerState
+    flash_speed: FlashSpeed
+    device_model: str
+    firmware_version: str
 
-LED_ORDER = ['red1', 'red2', 'amber', 'green', 'blue']
-
-console = Console()
-
-# --------------------------
-# Core Controller Class
-# --------------------------
+    def __str__(self):
+        status_lines = [
+            f"Device Model: {self.device_model}",
+            f"Firmware Version: {self.firmware_version}",
+            f"Red Light: {self.red}",
+            f"Yellow Light: {self.yellow}",
+            f"Green Light: {self.green}",
+            f"Buzzer: {self.buzzer}",
+            f"Flash Speed: {self.flash_speed}"
+        ]
+        return "\n".join(status_lines)
 
 class PatliteController:
-    """Smart controller for Patlite LA6-POE signal towers."""
-
-    def __init__(self) -> None:
-        self.socket: Optional[socket.socket] = None
-        self.ip = DEFAULT_IP
-        self.port = DEFAULT_PORT
-
-    def __enter__(self) -> 'PatliteController':
-        return self
-
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
-        self.disconnect()
-
-    def connect(self, ip: Optional[str] = None, port: Optional[int] = None) -> None:
-        """Establish connection to the Patlite device."""
-        if ip:
-            self.ip = ip
-        if port:
-            self.port = port
-
-        self.disconnect()
-        self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.settimeout(CONNECT_TIMEOUT)
+    """A human-friendly controller for Patlite LA6-POE signal lights with status monitoring."""
+    
+    DEFAULT_PORT = 10000
+    SOCKET_TIMEOUT = 2  # seconds
+    STATUS_COMMAND = b"$SR\r"
+    MODEL_COMMAND = b"$SM\r"
+    VERSION_COMMAND = b"$SV\r"
+    
+    def __init__(self, ip_address: str, port: int = DEFAULT_PORT):
+        """
+        Initialize the controller with device connection details.
+        
+        Args:
+            ip_address: The IP address of the Patlite device
+            port: The network port (default 10000)
+        """
+        self.ip_address = ip_address
+        self.port = port
+    
+    @contextmanager
+    def _connection(self):
+        """Context manager for socket connection."""
+        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        sock.settimeout(self.SOCKET_TIMEOUT)
         try:
-            self.socket.connect((self.ip, self.port))
-            console.print(f"🔌 [green]Connected to Patlite at {self.ip}:{self.port}[/green]")
-        except socket.error as e:
-            self.socket = None
-            raise ConnectionError(f"❌ [red]Connection failed:[/red] {e}")
-
-    def disconnect(self) -> None:
-        """Close the connection if open."""
-        if self.socket:
-            self.socket.close()
-            self.socket = None
-            console.print("[blue]🔌 Connection closed[/blue]")
-
-    def _send_command(self, command: str, data: bytes = b'') -> bytes:
-        """Send a command to the device and return the response."""
-        if not self.socket:
-            raise ConnectionError("Not connected to device")
+            sock.connect((self.ip_address, self.port))
+            yield sock
+        except socket.timeout:
+            raise ConnectionError(f"Timeout connecting to Patlite at {self.ip_address}:{self.port}")
+        except ConnectionRefusedError:
+            raise ConnectionError(f"Connection refused by Patlite at {self.ip_address}:{self.port}")
+        finally:
+            sock.close()
+    
+    def _send_command(self, command: bytes) -> str:
+        """
+        Send a command to the Patlite device and return response.
+        
+        Args:
+            command: The command bytes to send
+            
+        Returns:
+            str: The response from the device
+            
+        Raises:
+            ConnectionError: If communication with the device fails
+        """
         try:
-            header = struct.pack('>2ssxH', PRODUCT_CODE, command.encode(), len(data))
-            self.socket.sendall(header + data)
-            self.socket.settimeout(RESPONSE_TIMEOUT)
-            response = self.socket.recv(1024)
-            if not response:
-                raise ConnectionError("📡 No response received")
-            if response[0] == NAK:
-                raise ValueError("Device rejected command (NAK received)")
-            return response
-        except (socket.error, ConnectionError):
-            console.print("[yellow]⚠️ Communication error - attempting reconnect...[/yellow]")
-            self.connect()  # Auto-reconnect once
-            # Retry sending once
-            try:
-                header = struct.pack('>2ssxH', PRODUCT_CODE, command.encode(), len(data))
-                self.socket.sendall(header + data)
-                self.socket.settimeout(RESPONSE_TIMEOUT)
-                response = self.socket.recv(1024)
-                if not response or response[0] == NAK:
-                    raise ValueError("Device rejected command (after reconnect)")
+            with self._connection() as conn:
+                conn.sendall(command)
+                response = conn.recv(1024).decode('ascii').strip()
                 return response
-            except socket.error as e:
-                raise ConnectionError(f"❌ Communication failed even after reconnect: {e}")
-
-    def set_patterns(self, **led_patterns: str) -> None:
-        """Set LEDs using named patterns."""
-        patterns = {led: 'no_change' for led in LED_ORDER}
-        patterns.update(led_patterns)
+        except Exception as e:
+            raise ConnectionError(f"Failed to communicate with Patlite: {str(e)}")
+    
+    def get_status(self) -> DeviceStatus:
+        """
+        Get the current status of the Patlite device.
+        
+        Returns:
+            DeviceStatus: An object containing all status information
+            
+        Raises:
+            ValueError: If the status response is malformed
+        """
         try:
-            led_codes = [LED_PATTERNS[patterns[led].lower()] for led in LED_ORDER]
-        except KeyError as e:
-            raise ValueError(f"Invalid LED pattern: {e}")
+            # Get device model and version first
+            model = self._send_command(self.MODEL_COMMAND)
+            version = self._send_command(self.VERSION_COMMAND)
+            
+            # Get current status
+            status_response = self._send_command(self.STATUS_COMMAND)
+            
+            if not status_response.startswith("$SR") or len(status_response) < 8:
+                raise ValueError("Invalid status response format")
+            
+            # Parse status response: $SRRRYYGG*F
+            red = LightState(int(status_response[3]))
+            yellow = LightState(int(status_response[4]))
+            green = LightState(int(status_response[5]))
+            buzzer = BuzzerState(int(status_response[7]))
+            flash_speed = FlashSpeed(int(status_response[8]))
+            
+            return DeviceStatus(
+                red=red,
+                yellow=yellow,
+                green=green,
+                buzzer=buzzer,
+                flash_speed=flash_speed,
+                device_model=model.replace("$SM", "").strip(),
+                firmware_version=version.replace("$SV", "").strip()
+            )
+            
+        except (IndexError, ValueError) as e:
+            raise ValueError(f"Failed to parse device status: {str(e)}")
+    
+    def control_lights(
+        self,
+        red: LightState,
+        yellow: LightState,
+        green: LightState,
+        buzzer: Optional[BuzzerState] = None,
+        flash_speed: FlashSpeed = FlashSpeed.MEDIUM
+    ) -> bool:
+        """
+        Control the lights and buzzer of the Patlite.
+        
+        Args:
+            red: State for the red light
+            yellow: State for the yellow light
+            green: State for the green light
+            buzzer: State for the buzzer (None leaves unchanged)
+            flash_speed: Speed for flashing lights/buzzer
+            
+        Returns:
+            bool: True if command succeeded, False otherwise
+        """
+        # Build command string
+        cmd = f"$KE{red.value}{yellow.value}{green.value}"
+        cmd += f"{buzzer.value}" if buzzer is not None else "*"
+        cmd += f"{flash_speed.value}\r"
+        
+        print(f"Setting lights: Red {red}, Yellow {yellow}, Green {green}", end="")
+        if buzzer is not None:
+            print(f", Buzzer {buzzer}", end="")
+        print(f", Flash speed {flash_speed}")
+        
+        response = self._send_command(cmd.encode('ascii'))
+        return response == cmd.strip()
+    
+    def turn_all_off(self) -> bool:
+        """Turn all lights and buzzer off."""
+        print("Turning all lights and buzzer off")
+        return self.control_lights(
+            red=LightState.OFF,
+            yellow=LightState.OFF,
+            green=LightState.OFF,
+            buzzer=BuzzerState.OFF
+        )
+    
+    def test_sequence(self, duration: float = 1.0) -> bool:
+        """Run a test sequence of all lights and buzzer."""
+        print("Running test sequence...")
+        try:
+            self.turn_all_off()
+            time.sleep(duration)
+            
+            states = [
+                (LightState.ON, LightState.OFF, LightState.OFF, "Red light on"),
+                (LightState.OFF, LightState.ON, LightState.OFF, "Yellow light on"),
+                (LightState.OFF, LightState.OFF, LightState.ON, "Green light on"),
+                (LightState.FLASH, LightState.FLASH, LightState.FLASH, "All lights flashing with buzzer")
+            ]
+            
+            for red, yellow, green, description in states:
+                print(description)
+                if not self.control_lights(red, yellow, green, BuzzerState.ON if "buzzer" in description else None):
+                    return False
+                time.sleep(duration)
+            
+            return self.turn_all_off()
+        except Exception as e:
+            print(f"Test sequence failed: {str(e)}")
+            return False
 
-        self._send_command('s', struct.pack('BBBBB', *led_codes))
-        console.print("[cyan]💡 LED patterns updated[/cyan]")
-
-    def set_brightness(self, **brightness_levels: int) -> None:
-        """Set custom brightness levels (0-255) for LEDs."""
-        def _scale(value: int) -> int:
-            value = max(0, min(255, value))
-            if value == 0: return 0x00
-            if value < 51: return 0x01
-            if value < 102: return 0x02
-            if value < 204: return 0x03
-            return 0x04
-
-        levels = {led: 0 for led in LED_ORDER}
-        levels.update(brightness_levels)
-
-        scaled = [_scale(levels[led]) for led in LED_ORDER]
-        self._send_command('s', struct.pack('BBBBB', *scaled))
-        console.print("[magenta]🌈 Brightness levels set[/magenta]")
-
-    def all_off(self) -> None:
-        """Turn all LEDs off."""
-        self._send_command('c')
-        console.print("[dim]🌑 All LEDs turned off[/dim]")
-
-    def get_status(self) -> Dict[str, str]:
-        """Get current status of all LEDs."""
-        response = self._send_command('t')
-        status = {}
-        for i, led in enumerate(LED_ORDER):
-            code = response[i+1]
-            status[led] = next((name for name, val in LED_PATTERNS.items() if val == code), 'unknown')
-        return status
-
-# --------------------------
-# Command Line Interface
-# --------------------------
-
-def run_cli() -> int:
-    """Handle command line execution."""
+def parse_arguments() -> argparse.Namespace:
+    """Parse and validate command line arguments."""
     parser = argparse.ArgumentParser(
-        description="Patlite LA6-POE Controller",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""Examples:
-  Set patterns:   ./patlite.py set --red1 on --green slow
-  Set brightness: ./patlite.py brightness --red1 255 --amber 128
-  Clear all:      ./patlite.py clear
-  Check status:   ./patlite.py status"""
+        description="Patlite LA6-POE Controller - Control and monitor your signal lights",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
     )
-
-    parser.add_argument(
-        'command',
-        choices=['set', 'brightness', 'clear', 'status'],
-        help="Operation to perform"
+    
+    # Connection parameters
+    connection_group = parser.add_argument_group('Connection Settings')
+    connection_group.add_argument(
+        '--ip',
+        required=True,
+        help="IP address of your Patlite device"
     )
+    connection_group.add_argument(
+        '--port',
+        type=int,
+        default=PatliteController.DEFAULT_PORT,
+        help="Network port of the Patlite device"
+    )
+    
+    # Light control
+    light_group = parser.add_argument_group('Light Control')
+    for color in ['red', 'yellow', 'green']:
+        light_group.add_argument(
+            f'--{color}',
+            type=str.lower,
+            choices=['off', 'on', 'flash'],
+            help=f"Set {color} light state"
+        )
+    
+    # Buzzer control
+    buzzer_group = parser.add_argument_group('Buzzer Control')
+    buzzer_group.add_argument(
+        '--buzzer',
+        type=str.lower,
+        choices=['off', 'on', 'flash'],
+        help="Set buzzer state"
+    )
+    
+    # Flash control
+    flash_group = parser.add_argument_group('Flash Control')
+    flash_group.add_argument(
+        '--flash-speed',
+        type=str.lower,
+        choices=['slow', 'medium', 'fast'],
+        default='medium',
+        help="Set flash speed"
+    )
+    
+    # Actions
+    action_group = parser.add_argument_group('Actions')
+    action_group.add_argument(
+        '--test',
+        action='store_true',
+        help="Run a visual test sequence"
+    )
+    action_group.add_argument(
+        '--off',
+        action='store_true',
+        help="Turn all lights and buzzer off"
+    )
+    action_group.add_argument(
+        '--status',
+        action='store_true',
+        help="Check current device status"
+    )
+    
+    return parser.parse_args()
 
-    for led in LED_ORDER:
-        parser.add_argument(f'--{led}', help=f"{led} pattern or brightness (depending on command)")
-
-    parser.add_argument('--ip', default=DEFAULT_IP, help="Device IP address")
-    parser.add_argument('--port', type=int, default=DEFAULT_PORT, help="Device port")
-
-    args = parser.parse_args()
-
+def main():
+    """Main entry point for the script."""
+    args = parse_arguments()
+    
     try:
-        with PatliteController() as controller:
-            controller.connect(args.ip, args.port)
-
-            led_args = {led: getattr(args, led) for led in LED_ORDER if getattr(args, led) is not None}
-
-            if args.command == 'set':
-                controller.set_patterns(**led_args)
-            elif args.command == 'brightness':
-                brightness = {led: int(val) for led, val in led_args.items()}
-                controller.set_brightness(**brightness)
-            elif args.command == 'clear':
-                controller.all_off()
-            elif args.command == 'status':
-                status = controller.get_status()
-                console.print("\n[b]Current Status:[/b]\n")
-                for led, state in status.items():
-                    console.print(f"  [bold cyan]{led:>6}[/bold cyan]: [green]{state}[/green]")
-
+        # Create controller instance
+        controller = PatliteController(args.ip, args.port)
+        print(f"Connected to Patlite at {args.ip}:{args.port}")
+        
+        # Map string arguments to enums
+        state_map = {
+            'off': LightState.OFF,
+            'on': LightState.ON,
+            'flash': LightState.FLASH
+        }
+        speed_map = {
+            'slow': FlashSpeed.SLOW,
+            'medium': FlashSpeed.MEDIUM,
+            'fast': FlashSpeed.FAST
+        }
+        
+        # Execute requested action
+        if args.status:
+            status = controller.get_status()
+            print("\nCurrent Device Status:")
+            print("---------------------")
+            print(status)
+        elif args.test:
+            if not controller.test_sequence():
+                print("Test sequence completed with errors")
+        elif args.off:
+            if not controller.turn_all_off():
+                print("Failed to turn lights off")
+        elif any(getattr(args, color) for color in ['red', 'yellow', 'green']):
+            # Set specific light states
+            success = controller.control_lights(
+                red=state_map.get(args.red, LightState.OFF),
+                yellow=state_map.get(args.yellow, LightState.OFF),
+                green=state_map.get(args.green, LightState.OFF),
+                buzzer=BuzzerState[args.buzzer.upper()] if args.buzzer else None,
+                flash_speed=speed_map[args.flash_speed]
+            )
+            if not success:
+                print("Failed to set light states")
+        else:
+            print("No action specified. Use --help for usage information.")
+        
+    except ConnectionError as e:
+        print(f"Connection error: {str(e)}")
+    except ValueError as e:
+        print(f"Status error: {str(e)}")
     except Exception as e:
-        console.print(f"❌ [red]Error:[/red] {e}")
-        return 1
+        print(f"An unexpected error occurred: {str(e)}")
 
-    return 0
-
-if __name__ == '__main__':
-    import sys
-    sys.exit(run_cli())
+if __name__ == "__main__":
+    main()
