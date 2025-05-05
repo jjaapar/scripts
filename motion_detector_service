@@ -1,0 +1,27 @@
+[Unit]
+Description=Motion Detection Event Handler
+Documentation=https://github.com/your/project
+After=systemd-user-sessions.service
+
+[Service]
+ExecStart=/usr/local/bin/motion_monitor.py
+Restart=always
+RestartSec=5
+User=pi
+Group=dialout
+StandardOutput=journal
+StandardError=inherit
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target
+
+# Enable and Start the Service
+# sudo systemctl daemon-reexec
+# sudo systemctl enable motion_detector
+# sudo systemctl start motion_detector
+
+# Verify Operation
+# Check status:
+# systemctl status motion_detector
+# journalctl -u motion_detector.service -f
