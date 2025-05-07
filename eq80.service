@@ -1,0 +1,25 @@
+[Unit]
+Description=Temperature Monitoring Service
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/temperature/temperature_monitor.py
+Restart=always
+User=root
+StandardOutput=syslog
+StandardError=syslog
+SyslogIdentifier=temperature-monitor
+
+[Install]
+WantedBy=multi-user.target
+
+#sudo touch /var/log/temperature_monitor.log
+#sudo touch /var/log/temperature_results.txt
+#sudo chown root:root /var/log/temperature_*.txt#
+
+#sudo systemctl daemon-reload
+#sudo systemctl enable temperature_monitor
+#sudo systemctl start temperature_monitor
+
+#journalctl -u temperature_monitor.service -f
