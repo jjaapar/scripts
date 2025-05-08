@@ -1,71 +1,129 @@
 #!/usr/bin/env python3
 import serial
 import subprocess
-import time
 import sys
+import os
+import time
+import logging
 from typing import Optional
 
-def log(message: str) -> None:
-    """Log with timestamp to stderr for systemd journal"""
-    print(f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {message}", file=sys.stderr)
+# Configuration Constants
+SERIAL_PORT = '/dev/ttyACM0'
+BAUD_RATE = 9600
+SCRIPT_PATH = '/home/jazzeryj/jazzeryj/new_la6.py'
+LED_ON_DURATION = '11'
+LED_OFF_DURATION = '20'
+MAX_RECONNECT_ATTEMPTS = 5
+RETRY_DELAY = 10  # seconds
+
+# Configure logging to stderr with timestamp
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+    handlers=[logging.StreamHandler(sys.stderr)]
+)
 
 def execute_controller(duration: str) -> None:
     """Execute the controller script with the specified duration"""
+    if not os.path.exists(SCRIPT_PATH):
+        logging.error(f"Controller script not found at {SCRIPT_PATH}")
+        return
+    
     try:
-        subprocess.run([
-            '/usr/bin/python3',
-            '/home/jazzeryj/jazzeryj/new_la6.py',
+        result = subprocess.run([
+            sys.executable,
+            SCRIPT_PATH,
             'T', duration
-        ], check=True)
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=30  # Add timeout for subprocess
+        )
+        logging.debug(f"Script output: {result.stdout}")
+        
     except subprocess.CalledProcessError as e:
-        log(f"Script execution failed: {e}")
+        logging.error(f"Script execution failed (exit code {e.returncode}): {e.stderr}")
+    except subprocess.TimeoutExpired:
+        logging.error("Script execution timed out")
     except Exception as e:
-        log(f"Unexpected error during script execution: {e}")
+        logging.exception(f"Unexpected error during script execution: {e}")
 
 def process_serial_data(serial_connection: serial.Serial) -> Optional[str]:
     """Process data from serial connection with error handling"""
     try:
         line = serial_connection.readline().decode().strip()
-        return line if line else None
+        if line:
+            logging.debug(f"Received serial data: {line}")
+            return line
+        return None
     except UnicodeDecodeError as e:
-        log(f"Failed to decode serial data: {e}")
+        logging.warning(f"Failed to decode serial data: {e}")
+        return None
+    except serial.SerialTimeoutException:
+        logging.debug("Serial read timeout")
         return None
 
-def main() -> None:
-    serial_config = {
-        'port': '/dev/ttyACM0',
-        'baudrate': 9600,
-        'timeout': 1,
-        'bytesize': serial.EIGHTBITS,
-        'parity': serial.PARITY_NONE,
-        'stopbits': serial.STOPBITS_ONE
-    }
-
-    while True:
+def establish_serial_connection() -> Optional[serial.Serial]:
+    """Establish serial connection with retry mechanism"""
+    reconnect_attempts = 0
+    while reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
         try:
-            with serial.Serial(**serial_config) as ser:
-                log("Serial connection established")
-                while True:
-                    line = process_serial_data(ser)
-                    if not line:
-                        continue
-
-                    if line == "Motion detected!":
-                        log("Motion detected - Turning on the blue LED")
-                        execute_controller('11')
-                    elif line == "Motion ended!":
-                        log("Motion ended - Turning off LED")
-                        execute_controller('20')
-
+            ser = serial.Serial(
+                port=SERIAL_PORT,
+                baudrate=BAUD_RATE,
+                timeout=1,
+                bytesize=serial.EIGHTBITS,
+                parity=serial.PARITY_NONE,
+                stopbits=serial.STOPBITS_ONE
+            )
+            logging.info("Serial connection established successfully")
+            return ser
         except serial.SerialException as e:
-            log(f"Serial error: {e}. Retrying in 10s...")
-            time.sleep(10)
-        except KeyboardInterrupt:
-            log("Program terminated by user")
-            sys.exit(0)
-        except Exception as e:
-            log(f"Unexpected error: {e}. Restarting in 5s...")
-            time.sleep(5)
+            reconnect_attempts += 1
+            logging.error(f"Connection attempt {reconnect_attempts} failed: {e}")
+            if reconnect_attempts < MAX_RECONNECT_ATTEMPTS:
+                logging.info(f"Retrying in {RETRY_DELAY} seconds...")
+                time.sleep(RETRY_DELAY)
+    
+    logging.critical("Maximum reconnect attempts reached - exiting")
+    return None
+
+def main() -> None:
+    """Main application loop"""
+    try:
+        while True:
+            serial_conn = establish_serial_connection()
+            if not serial_conn:
+                break
+                
+            try:
+                while True:
+                    line = process_serial_data(serial_conn)
+                    
+                    if line == "Motion detected!":
+                        logging.info("Motion detected - Activating blue LED")
+                        execute_controller(LED_ON_DURATION)
+                        
+                    elif line == "Motion ended!":
+                        logging.info("Motion ended - Deactivating LED")
+                        execute_controller(LED_OFF_DURATION)
+                        
+                    elif line is not None:
+                        logging.debug(f"Received unexpected serial message: {line}")
+                        
+            except serial.SerialException:
+                logging.warning("Lost serial connection - attempting to reconnect")
+            finally:
+                serial_conn.close()
+                
+    except KeyboardInterrupt:
+        logging.info("Program terminated by user")
+    except Exception as e:
+        logging.exception(f"Critical error in main loop: {e}")
+    finally:
+        logging.info("Application shutdown complete")
 
 if __name__ == "__main__":
     main()
