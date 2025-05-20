@@ -31,6 +31,7 @@ logging.basicConfig(
         file_handler
     ]
 )
+
 def execute_controller(duration: str) -> None:
     """Execute the controller script with the specified duration"""
     if not os.path.exists(SCRIPT_PATH):
