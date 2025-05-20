@@ -6,24 +6,31 @@ import os
 import time
 import logging
 from typing import Optional
+from logging.handlers import RotatingFileHandler
 
 # Configuration Constants
 SERIAL_PORT = '/dev/ttyACM0'
 BAUD_RATE = 9600
 SCRIPT_PATH = '/home/jazzeryj/jazzeryj/new_la6.py'
-LED_ON_DURATION = '11'
-LED_OFF_DURATION = '20'
+BLUE_ON = '11'
+GREEN_ON = '10'
 MAX_RECONNECT_ATTEMPTS = 5
 RETRY_DELAY = 10  # seconds
 
-# Configure logging to stderr with timestamp
+# Configure logging to both stderr and a rotating log file
+LOG_FILENAME = '/home/jazzeryj/jazzeryj/controller_app.log'
+
+file_handler = RotatingFileHandler(LOG_FILENAME, maxBytes=5*1024*1024, backupCount=3)
+
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s [%(levelname)s] %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S',
-    handlers=[logging.StreamHandler(sys.stderr)]
+    handlers=[
+        logging.StreamHandler(sys.stderr),
+        file_handler
+    ]
 )
-
 def execute_controller(duration: str) -> None:
     """Execute the controller script with the specified duration"""
     if not os.path.exists(SCRIPT_PATH):
@@ -103,12 +110,12 @@ def main() -> None:
                     line = process_serial_data(serial_conn)
                     
                     if line == "Motion detected!":
-                        logging.info("Motion detected - Activating blue LED")
-                        execute_controller(LED_ON_DURATION)
+                        logging.info("Motion detected - Activating Blue LED")
+                        execute_controller(BLUE_ON)
                         
                     elif line == "Motion ended!":
-                        logging.info("Motion ended - Deactivating LED")
-                        execute_controller(LED_OFF_DURATION)
+                        logging.info("Motion ended - Activating Green LED")
+                        execute_controller(GREEN_ON)
                         
                     elif line is not None:
                         logging.debug(f"Received unexpected serial message: {line}")
