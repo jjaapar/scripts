@@ -1,29 +1,36 @@
-// Initialize the serial communication
+// === Temperature Monitoring System ===
+// Waits for a 'T' command over serial, reads temperature from analog pin A5,
+// converts it to degrees Celsius, prints the value, and checks for overheating.
+
+// === Setup: Initialize Serial Communication ===
 void setup() {
-  Serial.begin(115200); // Set baud rate for serial communication
+  // Start serial communication at 115200 baud rate
+  Serial.begin(115200);
+
+  // Wait a moment for things to settle
+  delay(1000);
+  Serial.println("🌡️ Temperature Monitor Started!");
+  Serial.println("Send 'R' to request temperature reading.");
 }
 
-// Function to check for high temperature and alert
-void checkTemperatureAlert(float temperature) {
-  if (temperature > 100) {
-    Serial.println("Warning: Temperature exceeded 100â„ƒ!");
-  }
-}
-
+// === Main Loop: Listen for commands and respond ===
 void loop() {
-  // Check if there is data available in the serial buffer
+  // Only do something if there's data in the serial buffer
   if (Serial.available() > 0) {
-    char query = Serial.read(); // Read incoming query
-    if (query == 'T') { // If query is 'T', return temperature data
-      unsigned int ADC_Value = analogRead(A5); // Read temperature sensor value
-      float temperature = ((double)ADC_Value * 340 / 614.4 - 70); 
-      // If the measured temperature is incorrect, adjust 340 to 450
-      
-      // Serial.print("Temperature: ");
+    char incomingChar = Serial.read(); // Read one character
+
+    // If the character is 'T', take a temperature reading
+    if (incomingChar == 'R') {
+      // Read raw analog value from the sensor on pin A5
+      int sensorValue = analogRead(A5);
+
+      // Convert the raw value to temperature in degrees Celsius
+      // Formula: ((ADC * 340 / 614.4) - 70)
+      // Adjust "340" to "450" if needed based on your sensor calibration
+      float temperature = ((float)sensorValue * 340 / 614.4 - 70);
+
+      // Print the temperature to the serial monitor
       Serial.print(temperature);
-      // Serial.println(" C");
-      
-      checkTemperatureAlert(temperature); // Check for high temperature alert
     }
   }
 }
