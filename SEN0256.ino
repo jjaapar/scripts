@@ -19,8 +19,8 @@ void setup() {
   delay(1000);
 
   // Friendly startup message
-  Serial.println("Temperature Monitor is Running!");
-  Serial.println("Send the letter 'R' to get a temperature reading.");
+  // Serial.println("Temperature Monitor is Running!");
+  // Serial.println("Send the letter 'R' to get a temperature reading.");
 }
 
 // --- Loop: Waits for Commands and Responds ---
