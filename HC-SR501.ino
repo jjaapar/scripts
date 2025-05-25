@@ -1,57 +1,101 @@
-// === PIR Motion Sensor Project ===
-// This sketch reads from a PIR motion sensor,
-// debounces the signal, and prints messages when motion starts or stops.
+/*
+ * === PIR Motion Sensor Project ===
+ * 
+ * This sketch reads from a PIR motion sensor,
+ * debounces the signal, and prints messages when motion starts or stops.
+ */
 
-// === Pin Setup ===
-const int PIR_PIN = 8; // PIR sensor connected to digital pin 8
+// -----------------------------
+// Configuration Section
+// -----------------------------
 
-// === Debounce Timing ===
-// We use a short delay to ignore quick flickers in sensor signal
-const unsigned long DEBOUNCE_DELAY_MS = 50;
+// Hardware configuration
+constexpr int PIR_PIN = 8; // PIR sensor connected to digital pin 8
 
-// === Variables to track state ===
-int currentPirReading = LOW;     // What we just read from the sensor
-int lastPirReading = LOW;        // Previous reading to detect changes
-unsigned long lastDebounceTime;  // When the sensor last changed state
-bool motionDetected = false;     // Final debounced state: is there motion?
+// Timing settings
+constexpr unsigned long DEBOUNCE_DELAY_MS = 50; // Time to wait before accepting a stable state
+constexpr unsigned long SENSOR_WARMUP_TIME_MS = 60000; // Time for PIR to calibrate
 
+// Serial communication
+constexpr long BAUD_RATE = 9600;
+
+// -----------------------------
+// Global State Variables
+// -----------------------------
+int currentReading = LOW;
+int lastReading = LOW;
+unsigned long lastDebounceTime = 0;
+bool motionDetected = false;
+
+// -----------------------------
+// Function Declarations
+// -----------------------------
+void setupSensor();
+void updateMotionState();
+void printMotionStatusChange(bool motionActive);
+
+// -----------------------------
+// Setup: Runs once at startup
+// -----------------------------
 void setup() {
-  // Start serial communication so we can send messages to the computer
-  Serial.begin(9600);
+    // Initialize serial communication
+    Serial.begin(BAUD_RATE);
 
-  // Tell Arduino that the PIR pin is an input
-  pinMode(PIR_PIN, INPUT);
+    // Configure hardware
+    setupSensor();
 
-  // Let the PIR sensor warm up - it needs about 60 seconds to calibrate
-  Serial.println("Warming up PIR sensor...");
-  delay(60000); // Wait for one minute
-  Serial.println("Sensor ready! Ready to detect motion.");
+    // Allow time for PIR to stabilize
+    Serial.println("Warming up PIR sensor...");
+    delay(SENSOR_WARMUP_TIME_MS);
+    Serial.println("Sensor ready! Ready to detect motion.");
 }
 
+// -----------------------------
+// Loop: Main program loop
+// -----------------------------
 void loop() {
-  // Read the current value from the PIR sensor
-  currentPirReading = digitalRead(PIR_PIN);
+    // Read current value from PIR sensor
+    currentReading = digitalRead(PIR_PIN);
 
-  // If the new reading is different from the last one, reset the debounce timer
-  if (currentPirReading != lastPirReading) {
-    lastDebounceTime = millis();
-  }
+    // Update motion detection logic
+    updateMotionState();
+}
 
-  // Only update the motion state if the reading has been stable for longer than the debounce time
-  if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY_MS) {
-    // If the motion state has actually changed
-    if (currentPirReading != motionDetected) {
-      motionDetected = currentPirReading;
+// -----------------------------
+// Initialize sensor pin
+// -----------------------------
+void setupSensor() {
+    pinMode(PIR_PIN, INPUT);
+}
 
-      // Print out a message based on whether motion started or stopped
-      if (motionDetected) {
-        Serial.println("Motion detected!");
-      } else {
-        Serial.println("Motion ended.");
-      }
+// -----------------------------
+// Update motion detection state with debounce
+// -----------------------------
+void updateMotionState() {
+    if (currentReading != lastReading) {
+        // Reset debounce timer on change
+        lastDebounceTime = millis();
     }
-  }
 
-  // Save this reading for next loop iteration
-  lastPirReading = currentPirReading;
+    // Only consider the change valid after debounce period
+    if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY_MS) {
+        if (currentReading != motionDetected) {
+            motionDetected = currentReading;
+            printMotionStatusChange(motionDetected);
+        }
+    }
+
+    // Save reading for next iteration
+    lastReading = currentReading;
+}
+
+// -----------------------------
+// Print message based on motion state
+// -----------------------------
+void printMotionStatusChange(bool motionActive) {
+    if (motionActive) {
+        Serial.println("Motion detected!");
+    } else {
+        Serial.println("Motion ended.");
+    }
 }
