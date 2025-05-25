@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """
 Simple Temperature Monitor
-
 Checks temperature on 3 devices every 5 minutes.
 Powers off system if any device gets too hot.
 """
-
 import serial
 import subprocess
 import logging
@@ -39,7 +37,6 @@ def shutdown(signum, frame):
 signal.signal(signal.SIGTERM, shutdown)
 signal.signal(signal.SIGINT, shutdown)
 
-
 def get_temperature(device):
     """Get temperature from one device"""
     
@@ -61,7 +58,6 @@ def get_temperature(device):
         logging.error(f"Failed to read {device}: {e}")
         return None
 
-
 def power_off():
     """Emergency power off"""
     
@@ -71,7 +67,6 @@ def power_off():
         logging.critical("SYSTEM POWERED OFF DUE TO OVERHEATING")
     except Exception as e:
         logging.error(f"Power off failed: {e}")
-
 
 def check_all_devices():
     """Check temperature on all devices"""
@@ -103,7 +98,6 @@ def check_all_devices():
     if emergency:
         power_off()
 
-
 def main():
     """Main monitoring loop"""
     
@@ -118,7 +112,6 @@ def main():
         logging.info("Stopped by user")
     except Exception as e:
         logging.critical(f"Critical error: {e}")
-
 
 if __name__ == "__main__":
     main()
