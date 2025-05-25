@@ -1,3 +1,5 @@
+Rewrite the following code to follow best practices for c++
+
 // === Temperature Monitor Project ===
 // This program waits for you to send the letter 'R' over serial.
 // When it gets that command, it reads the analog temperature sensor on pin A5,
