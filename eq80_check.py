@@ -1,10 +1,14 @@
 #!/usr/bin/env python3
 """
-Temperature Monitoring Service
+Temperature Monitoring Service with Multiple Device Support
 
-Monitors temperature readings from a serial device and initiates power cycling
-if temperature exceeds safe thresholds. Maintains detailed logs and stores
-historical temperature data.
+Monitors three serial-connected temperature devices: txpaa1, txpaa2, txpaa3.
+If any device reports a temperature above the safe limit,
+this script will run a system power-cycle command.
+
+Logs:
+- Main log: /var/log/temperature_monitor.log
+- Temperature history: /var/log/temperature_results.txt
 """
 
 import serial
@@ -16,30 +20,34 @@ import signal
 import sys
 import re
 
-# ============================================================================
-# Configuration Section
-# ============================================================================
+# ==============================================================================
+# 🛠️ Configuration Section
+# ==============================================================================
 
-# Log files configuration
-LOG_FILE = '/var/log/temperature_monitor.log'        # Service activity log
-RESULTS_FILE = '/var/log/temperature_results.txt'    # Temperature history storage
+# Log files where the program records its actions
+LOG_FILE = '/var/log/temperature_monitor.log'        # Logs what the service does
+RESULTS_FILE = '/var/log/temperature_results.txt'    # Stores historical readings
 
-# Device communication settings
-SERIAL_PORT = 'ttyACM0'              # Serial port name for temperature sensor
-BAUD_RATE = 115200                   # Communication speed (bits per second)
+# List of temperature sensors to monitor
+# These correspond to serial ports under /dev/
+DEVICES = ["txpaa1", "txpaa2", "txpaa3"]
+
+# Communication settings for talking to the devices
+BAUD_RATE = 115200                   # Speed of communication
 DEVICE_COMMAND = 'R\n'               # Command to request temperature reading
 
-# Monitoring parameters
-TEMPERATURE_THRESHOLD = 180.0        # °C - Maximum safe operating temperature
-CHECK_INTERVAL = 300                 # Seconds between temperature checks
+# Safety settings
+TEMPERATURE_THRESHOLD = 180.0        # Max safe temperature in degrees Celsius
+CHECK_INTERVAL = 300                 # How often to check (in seconds, default: 5 minutes)
 
-# System control commands
-POWER_CYCLE_COMMAND = ['/usr/sbin/powercycle', 'txpaa', '--power-off']
+# System command to run if any device gets too hot
+POWER_CYCLE_COMMAND = ['/usr/sbin/powercycle', 'chroma', '--power-off']
 
-# ============================================================================
-# Logging Configuration
-# ============================================================================
 
+# ==============================================================================
+# 📜 Logging Setup
+# ==============================================================================
+# Set up logging so we can track everything the script does
 logging.basicConfig(
     filename=LOG_FILE,
     level=logging.INFO,
@@ -47,79 +55,80 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-# ============================================================================
-# Signal Handling
-# ============================================================================
 
+# ==============================================================================
+# ⚠️ Graceful Shutdown Handling
+# ==============================================================================
 def handle_termination_signal(signum, frame):
     """
-    Gracefully handle termination signals
+    If someone tries to stop the script (like pressing Ctrl+C or sending a kill signal),
+    this function handles it cleanly and logs the shutdown.
     
     Args:
-        signum: Signal number
-        frame: Current stack frame
+        signum: Signal number (e.g., SIGINT, SIGTERM)
+        frame: Current stack frame (not used here)
     """
     logging.info(f"Received termination signal {signum}. Shutting down service.")
     sys.exit(0)
 
-# Register signal handlers for clean shutdown
+# Register handlers for keyboard interrupt and system terminate signals
 signal.signal(signal.SIGTERM, handle_termination_signal)
 signal.signal(signal.SIGINT, handle_termination_signal)
 
-# ============================================================================
-# Device Communication Layer
-# ============================================================================
 
-def query_temperature_sensor(port_name):
+# ==============================================================================
+# 💬 Communicating with the Devices
+# ==============================================================================
+def query_temperature_sensor(device_name):
     """
-    Communicate with temperature sensor over serial connection
+    Connects to a single serial device and asks for its current temperature.
     
     Args:
-        port_name: Name of serial port to use (e.g., 'ttyACM0')
+        device_name: Name of the device (e.g., txpaa1)
     
     Returns:
-        str: Raw response from device, or None if communication failed
+        The raw string response from the device, or None if something went wrong.
     """
-    port_path = f"/dev/{port_name}"
-    
+
+    port_path = f"/dev/{device_name}"  # Full path to serial port
+
     try:
-        # Establish serial connection
+        # Open serial connection
         with serial.Serial(port_path, BAUD_RATE, timeout=1) as serial_connection:
-            # Allow device time to initialize
-            time.sleep(2)
-            
-            # Clear communication buffers
+            time.sleep(2)  # Give the device time to initialize
+
+            # Clear old data before starting
             serial_connection.reset_input_buffer()
             serial_connection.reset_output_buffer()
-            
-            # Send temperature reading command
+
+            # Send command to get temperature
             serial_connection.write(DEVICE_COMMAND.encode())
-            
-            # Read response (expecting single line)
+
+            # Read the device's reply
             response = serial_connection.readline().decode().strip()
 
-        logging.debug(f"Raw sensor response: {response}")
+        # For debugging: log the raw response
+        logging.debug(f"{device_name} raw response: {response}")
         return response
 
     except serial.SerialException as e:
-        logging.error(f"Serial communication failure on {port_name}: {str(e)}")
+        logging.error(f"Serial communication failure on {device_name}: {str(e)}")
         return None
     except Exception as e:
-        logging.exception(f"Unexpected error with {port_name}: {str(e)}")
+        logging.exception(f"Unexpected error with {device_name}: {str(e)}")
         return None
 
-# ============================================================================
-# System Control Functions
-# ============================================================================
 
+# ==============================================================================
+# ⚙️ Power Cycle Trigger
+# ==============================================================================
 def initiate_power_cycle():
     """
-    Execute power cycle command to reset hardware
-    
-    Typically used when temperature exceeds safe thresholds
+    Runs the power-cycle command to shut off power if an overheat is detected.
+    This helps prevent damage from overheating hardware.
     """
     try:
-        # Execute power cycle command silently
+        # Run the power-cycle silently without showing output
         subprocess.run(
             POWER_CYCLE_COMMAND,
             check=True,
@@ -130,86 +139,92 @@ def initiate_power_cycle():
     except subprocess.CalledProcessError as e:
         logging.error(f"Failed to execute power cycle: {str(e)}")
 
-# ============================================================================
-# Monitoring Logic
-# ============================================================================
 
+# ==============================================================================
+# 🔍 Main Monitoring Logic
+# ==============================================================================
 def process_temperature_reading():
     """
-    Main temperature monitoring workflow:
-    1. Query sensor for current temperature
-    2. Parse and validate response
-    3. Log results
-    4. Initiate safety measures if needed
+    Checks the temperature of each connected device.
+    If any device goes above the safe limit, prepares to trigger a power cycle.
     """
-    raw_response = query_temperature_sensor(SERIAL_PORT)
-    
-    if not raw_response:
-        logging.warning("No valid response from temperature sensor")
-        return
 
-    try:
-        # Extract numeric value from response (handles formats like "Temp: 123.45°C")
-        numeric_match = re.search(r'[-+]?\d*\.\d+|\d+', raw_response)
-        
-        if not numeric_match:
-            raise ValueError(f"Could not find numeric value in response: '{raw_response}'")
+    high_temp_detected = False  # Start with assumption that everything is okay
 
-        # Convert to floating point temperature
-        current_temp = float(numeric_match.group())
+    # Loop through all devices
+    for device in DEVICES:
+        raw_response = query_temperature_sensor(device)
 
-        # Create timestamped record
-        timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        log_entry = f"{timestamp} - Temperature: {current_temp}°C"
-        
-        # Store in results file
-        with open(RESULTS_FILE, 'a') as results_file:
-            results_file.write(log_entry + '\n')
+        if not raw_response:
+            logging.warning(f"No valid response from {device}")
+            continue  # Skip to next device
 
-        # Log to main service log
-        logging.info(f"Current temperature: {current_temp:.2f}°C")
+        try:
+            # Extract numbers from text (handles responses like "Temp: 75.3°C")
+            numeric_match = re.search(r'[-+]?\d*\.\d+|\d+', raw_response)
 
-        # Safety check: compare against threshold
-        if current_temp > TEMPERATURE_THRESHOLD:
-            logging.warning(f"High temperature detected! {current_temp:.2f}°C vs threshold {TEMPERATURE_THRESHOLD}°C")
-            initiate_power_cycle()
+            if not numeric_match:
+                raise ValueError(f"Could not find numeric value in response: '{raw_response}'")
 
-    except ValueError as e:
-        logging.error(f"Invalid temperature reading: {str(e)}")
-    except Exception as e:
-        logging.exception(f"Error processing temperature: {str(e)}")
+            # Convert text to actual temperature number
+            current_temp = float(numeric_match.group())
 
-# ============================================================================
-# Service Management
-# ============================================================================
+            # Format timestamp for logging
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            log_entry = f"{timestamp} - [{device}] Temperature: {current_temp}°C"
 
+            # Save this result to file
+            with open(RESULTS_FILE, 'a') as results_file:
+                results_file.write(log_entry + '\n')
+
+            # Log the temperature to the main log file
+            logging.info(f"[{device}] Current temperature: {current_temp:.2f}°C")
+
+            # Check if it's too hot
+            if current_temp > TEMPERATURE_THRESHOLD:
+                logging.warning(f"[{device}] High temp: {current_temp:.2f}°C (threshold: {TEMPERATURE_THRESHOLD}°C)")
+                high_temp_detected = True  # We'll need to power cycle later
+
+        except ValueError as e:
+            logging.error(f"[{device}] Invalid temperature reading: {str(e)}")
+        except Exception as e:
+            logging.exception(f"[{device}] Error processing temperature: {str(e)}")
+
+    # After checking all devices, decide whether to power cycle
+    if high_temp_detected:
+        initiate_power_cycle()
+
+
+# ==============================================================================
+# 🕒 Continuous Monitoring Loop
+# ==============================================================================
 def start_monitoring_service():
     """
-    Main service loop that periodically checks temperature
-    
-    Handles periodic execution and error recovery for the monitoring process
+    Starts the background monitoring loop.
+    Keeps running until manually stopped or system shuts down.
     """
+
     logging.info("Temperature monitoring service started")
-    
+
     try:
         while True:
             try:
-                process_temperature_reading()
+                process_temperature_reading()  # Do the actual work
             except Exception as e:
                 logging.exception(f"Monitoring iteration error: {str(e)}")
-            
-            # Wait until next check interval
+
+            # Wait for the configured amount of time before next check
             time.sleep(CHECK_INTERVAL)
-            
+
     except KeyboardInterrupt:
         logging.info("User requested service shutdown via keyboard interrupt")
     except Exception as e:
         logging.critical(f"Critical service failure: {str(e)}", exc_info=True)
         sys.exit(1)
 
-# ============================================================================
-# Entry Point
-# ============================================================================
 
+# ==============================================================================
+# 🚀 Entry Point – Start the Program
+# ==============================================================================
 if __name__ == "__main__":
     start_monitoring_service()
