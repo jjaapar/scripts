@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Advanced Temperature Monitor
-Monitors multiple devices concurrently with configurable thresholds.
-Implements hysteresis to prevent false positives and graceful shutdown.
+Advanced Temperature Monitor with Robust Serial Communication
 """
 
 import argparse
@@ -19,7 +17,7 @@ import time
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 
-# Default configuration (overridden by config file)
+# Default configuration
 DEFAULT_CONFIG = {
     "devices": ["txpaa1", "txpaa2", "txpaa3"],
     "max_temp": 180.0,
@@ -33,7 +31,7 @@ DEFAULT_CONFIG = {
     "serial_settings": {
         "baudrate": 115200,
         "timeout": 1.0,
-        "wakeup_delay": 0.5
+        "wakeup_delay": 2.0  # Increased based on communication snippet
     }
 }
 
@@ -77,32 +75,51 @@ def shutdown_handler(signum: int, frame) -> None:
     sys.exit(0)
 
 def get_temperature(device: str) -> Optional[float]:
-    """Read temperature from serial device with error handling and retries"""
+    """
+    Robust temperature reading with buffer management
+    Incorporates improvements from the communication snippet
+    """
     serial_settings = config["serial_settings"]
+    device_path = f"/dev/{device}"
+    
     for attempt in range(config["retry_count"]):
         try:
             with serial.Serial(
-                port=f"/dev/{device}",
+                port=device_path,
                 baudrate=serial_settings["baudrate"],
                 timeout=serial_settings["timeout"]
             ) as conn:
+                # Apply wakeup delay
                 time.sleep(serial_settings["wakeup_delay"])
+                
+                # Reset buffers as in the snippet
+                conn.reset_input_buffer()
+                conn.reset_output_buffer()
+                
+                # Send command
                 conn.write(b'R\n')
+                
+                # Read response
                 response = conn.readline().decode().strip()
+                logger.debug(f"Raw response from {device}: '{response}'")
                 
                 # Improved temperature parsing
                 match = re.search(r'(\d{1,3}\.?\d*)', response)
                 if match:
-                    return float(match.group(1))
-                logger.warning(f"Invalid response from {device}: '{response}'")
+                    temp = float(match.group(1))
+                    logger.debug(f"Parsed temperature from {device}: {temp}°C")
+                    return temp
+                
+                logger.warning(f"No temperature value found in response from {device}: '{response}'")
 
-        except (serial.SerialException, UnicodeDecodeError) as e:
+        except (serial.SerialException, UnicodeDecodeError, OSError) as e:
             logger.warning(f"Attempt {attempt+1} failed on {device}: {str(e)}")
         
+        # Wait before next retry
         if attempt < config["retry_count"] - 1:
             time.sleep(config["retry_delay"])
     
-    logger.error(f"All attempts failed for {device}")
+    logger.error(f"All temperature read attempts failed for {device}")
     return None
 
 def check_temperatures() -> bool:
