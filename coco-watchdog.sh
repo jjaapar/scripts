@@ -21,9 +21,6 @@ fi
 # ---------------------------- configuration ---------------------------------
 read -r -a UNITS <<< "${UNITS:-192.168.0.11 192.168.0.12 192.168.0.13}"
 
-# What to hand to the powercycle command for each IP. If your powercycle
-# utility takes the IP directly, delete this block (unmapped IPs fall back to
-# the IP itself). Values could equally be PDU outlet numbers, e.g. [.11]=3.
 declare -A PC_TARGET=(
     [192.168.0.11]=coco1
     [192.168.0.12]=coco2
@@ -34,12 +31,12 @@ PING_COUNT="${PING_COUNT:-3}"                 # echo requests per test
 PING_TIMEOUT="${PING_TIMEOUT:-2}"             # seconds to wait per request
 RECOVERY_WAIT="${RECOVERY_WAIT:-120}"         # seconds to wait after powercycle
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"             # powercycles before giving up
-LOOP_INTERVAL="${LOOP_INTERVAL:-60}"          # seconds between passes in --loop
+LOOP_INTERVAL="${LOOP_INTERVAL:-30}"          # seconds between passes in --loop
 POWERCYCLE_CMD="${POWERCYCLE_CMD:-powercycle}"
 # If powercycle is a shell *function* rather than an executable, point this at
 # the file that defines it — it gets sourced so the function is in scope here.
 # e.g. POWERCYCLE_LIB=/usr/local/lib/pdu-functions.sh
-POWERCYCLE_LIB="${POWERCYCLE_LIB:-}"
+POWERCYCLE_LIB="${POWERCYCLE_LIB:-/opt/hitl-tools/.managefunctions}"
 LOG_FILE="${LOG_FILE:-/tmp/coco-watchdog.log}"
 LOOP=0
 # ----------------------------------------------------------------------------
