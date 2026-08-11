@@ -7,6 +7,7 @@
 #   ./coco-watchdog.sh              # single pass over all units
 #   ./coco-watchdog.sh --loop       # keep monitoring forever
 #   ./coco-watchdog.sh --loop --interval 300
+#   ./coco-watchdog.sh --lib /path/to/powercycle-func.sh   # powercycle is a function
 #   UNITS="192.168.0.11 192.168.0.14" ./coco-watchdog.sh
 #
 set -uo pipefail
@@ -35,6 +36,10 @@ RECOVERY_WAIT="${RECOVERY_WAIT:-120}"         # seconds to wait after powercycle
 MAX_ATTEMPTS="${MAX_ATTEMPTS:-3}"             # powercycles before giving up
 LOOP_INTERVAL="${LOOP_INTERVAL:-60}"          # seconds between passes in --loop
 POWERCYCLE_CMD="${POWERCYCLE_CMD:-powercycle}"
+# If powercycle is a shell *function* rather than an executable, point this at
+# the file that defines it — it gets sourced so the function is in scope here.
+# e.g. POWERCYCLE_LIB=/usr/local/lib/pdu-functions.sh
+POWERCYCLE_LIB="${POWERCYCLE_LIB:-}"
 LOG_FILE="${LOG_FILE:-/tmp/coco-watchdog.log}"
 LOOP=0
 # ----------------------------------------------------------------------------
@@ -45,6 +50,7 @@ while (( $# )); do
         --once)      LOOP=0 ;;
         --interval)  LOOP_INTERVAL="$2"; shift ;;
         --units)     read -r -a UNITS <<< "$2"; shift ;;
+        --lib)       POWERCYCLE_LIB="$2"; shift ;;
         -h|--help)   sed -n '2,12p' "$0"; exit 0 ;;
         *)           echo "Unknown option: $1" >&2; exit 2 ;;
     esac
@@ -106,8 +112,27 @@ run_pass() {
 
 # --- sanity checks ----------------------------------------------------------
 command -v ping >/dev/null 2>&1 || { echo "ping not found" >&2; exit 1; }
+
+# Pull in the powercycle function, if it lives in a separate file. Sourced with
+# -u relaxed so a lib written without `set -u` in mind doesn't abort the script.
+if [[ -n "$POWERCYCLE_LIB" ]]; then
+    if [[ ! -r "$POWERCYCLE_LIB" ]]; then
+        echo "cannot read POWERCYCLE_LIB: $POWERCYCLE_LIB" >&2
+        exit 1
+    fi
+    set +u
+    # shellcheck source=/dev/null
+    . "$POWERCYCLE_LIB"
+    set -u
+fi
+
+# command -v resolves shell functions as well as executables, so this covers
+# both cases. A function only counts if it was defined or sourced above.
 if ! command -v "$POWERCYCLE_CMD" >/dev/null 2>&1; then
-    echo "warning: '$POWERCYCLE_CMD' not found in PATH" >&2
+    echo "error: '$POWERCYCLE_CMD' is not an executable, builtin, or defined function." >&2
+    echo "       If it's a shell function, source its file with --lib FILE" >&2
+    echo "       or export it from the parent shell with: export -f $POWERCYCLE_CMD" >&2
+    exit 1
 fi
 touch "$LOG_FILE" 2>/dev/null || { echo "cannot write $LOG_FILE" >&2; exit 1; }
 
